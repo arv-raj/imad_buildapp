@@ -1,5 +1,5 @@
 {
-  "name": "imad-build-app",
+  "name": "imad_buildapp",
   "version": "0.1.0",
   "description": "IMAD Course app",
   "main": "server.js",

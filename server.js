@@ -100,6 +100,11 @@ app.get('/ui/madi.png', function (req, res) {
 	res.sendFile(path.join(__dirname, 'ui', 'madi.png'));
 });
 
+app.get('/ui/main.js', function (req, res) {
+	res.sendFile(path.join(__dirname, 'ui', 'main.js'));
+});
+
+
 var port = 8080;
 app.listen(8080, function () {
 	console.log('IMAD course app listening on port',port,'!');

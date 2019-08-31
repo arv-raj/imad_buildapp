@@ -1,11 +1,14 @@
 var express = require('express');
 var morgan = require('morgan');
 var path = require('path');
-
+var Pool = require('pg').Pool;
+var crypto = require('crypto');
+var bodyParser = require('body-parser');
 var app = express();
 app.use(morgan('combined'));
+app.use(bodyParser.json());
 
-var articles = {
+/*var articles = {
 	'article-one': {
 		title: 'Article One ! IMAD App',
 		heading: 'Article One',
@@ -57,7 +60,7 @@ var articles = {
 				<ul id="commentlist">
 				</ul>`
 	}
-};
+};*/
 
 function createTemplate (data) {
 	var title = data.title;
@@ -85,16 +88,16 @@ function createTemplate (data) {
 					${heading}
 				</h3>
 				<div>
-					${date}
+					${date.toDateString()}
 				</div>
 				<div>
 					${content}     
 				</div>
-				<div>
+				<!--<div>
 					${comment}
 				</div>
 				<script type="text/javascript" src="../ui/comment.js">
-				</script>
+				</script>-->
 			</div>
 		</body>
 	</html>
@@ -104,6 +107,73 @@ function createTemplate (data) {
 
 app.get('/', function(req, res) {
 	res.sendFile(path.join(__dirname, 'ui', 'index.html'));
+});
+
+function hash (input, salt) {
+	var hashed = crypto.pbkdf2Sync(input, salt, 10000, 512, 'sha512');
+	return ["pbkdf2", "10000", salt, hashed.toString('hex')].join('$');
+};
+
+app.get('/hash/:input', function(req, res) {
+	var salt = 'this-is-some-random-string';
+	var hashedString = hash(req.params.input, salt);
+	res.send(hashedString);
+});
+
+app.post('/create-user', function (req, res) {
+	var username = req.body.username;
+	var password = req.body.password;
+	var salt = crypto.randomBytes(128).toString('hex');
+	var dbString = hash(password, salt);
+	pool.query('INSERT INTO "user" (username, password) VALUES ($1, $2)', [username, dbString], function (err, result) {
+		if (err){
+			res.status(500).send(err.toString());
+		} else {
+			res.send("User Successfully created: " + username);
+		}
+	});
+});
+
+app.post('/login', function (req, res) {
+	var username = req.body.username;
+	var password = req.body.password;
+	pool.query('SELECT * from "user" where username = $1', [username], function (err, result) {
+		if (err){
+			res.status(500).send(err.toString());
+		} else {
+			if (result.rows.length === 0) {
+				res.status(403).send("User not found");
+			} else {
+				var dbString = result.rows[0].password;
+				var salt = dbString.split('$')[2];
+				var hashedPassword = hash(password, salt);
+				if (hashedPassword === dbString) {
+				res.send("Credentials are correct");	
+				} else {
+					res.status(403).send("Credentials Incorrect");
+				}
+			}
+		}	
+	});
+});
+
+var pool = new Pool({
+	user: 'postgres',
+	host: 'localhost',
+	database: 'imad_buildapp',
+	password: process.env.DB_PASSWORD,
+	port: 5432
+});
+app.get('/test-db', function(req, res) {
+	//make a select request
+	pool.query('SELECT * FROM test', function (err, result){
+		if (err){
+			res.status(500).send(err.toString());
+		} else {
+			res.send(JSON.stringify(result.rows));
+		}
+	});
+	//return a response with results
 });
 
 var counter = 0;
@@ -121,18 +191,28 @@ app.get('/submit-bird', function (req, res) {
 });
 
 var commentList = [];
-app.get('/:articleName/comment', function (req, res) {
+app.get('/articals/:articleName/comment', function (req, res) {
 	//Get the Comment from request
 	var comment = req.query.comment;
 	commentList.push(comment);
 	res.send(JSON.stringify(commentList));
 });
 
-app.get('/:articleName', function(req, res) {
+app.get('/articles/:articleName', function(req, res) {
 	// articleName = article-one
 	// articles[articleName] == {} content object for article one
-	var articleName = req.params.articleName;
-	res.send(createTemplate(articles[articleName]));
+	pool.query("SELECT * FROM article WHERE title = $1", [req.params.articleName], function (err, result){
+		if (err) {
+			res.status(500).send(err.toString());
+		} else {
+			if (result.rows.length === 0) {
+				res.status(404).send("Article not found");
+			} else {
+				var articleData = result.rows[0];
+				res.send(createTemplate(articleData));
+			}
+		}
+	});
 	/*res.sendFile(path.join(__dirname, 'ui', 'article-one.html'));*/
 });
 

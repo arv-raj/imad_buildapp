@@ -4,9 +4,14 @@ var path = require('path');
 var Pool = require('pg').Pool;
 var crypto = require('crypto');
 var bodyParser = require('body-parser');
+var session = require('express-session');
 var app = express();
 app.use(morgan('combined'));
 app.use(bodyParser.json());
+app.use(session({
+	secret: 'someRandomSecretValue',
+	cookie: { maxAge: 1000 * 60 * 60 * 24 * 30 }
+}));
 
 /*var articles = {
 	'article-one': {
@@ -81,7 +86,7 @@ function createTemplate (data) {
 		<body>
 			<div class="container">
 				<div>
-					<a href="/">Home</a>
+					<a href="/">Back to Home</a>
 				</div>
 				<hr/>
 				<h3>
@@ -93,11 +98,14 @@ function createTemplate (data) {
 				<div>
 					${content}     
 				</div>
-				<!--<div>
-					${comment}
+				<h3>Comments</h3>
+				<div id="comment_form>
+				</div>
+				<div id="comments">
+					<center>Loading Comments ...</center>
 				</div>
 				<script type="text/javascript" src="../ui/comment.js">
-				</script>-->
+				</script>
 			</div>
 		</body>
 	</html>
@@ -118,6 +126,14 @@ app.get('/hash/:input', function(req, res) {
 	var salt = 'this-is-some-random-string';
 	var hashedString = hash(req.params.input, salt);
 	res.send(hashedString);
+});
+
+var pool = new Pool({
+	user: 'postgres',
+	host: 'localhost',
+	database: 'imad_buildapp',
+	password: process.env.DB_PASSWORD,
+	port: 5432
 });
 
 app.post('/create-user', function (req, res) {
@@ -142,13 +158,14 @@ app.post('/login', function (req, res) {
 			res.status(500).send(err.toString());
 		} else {
 			if (result.rows.length === 0) {
-				res.status(403).send("User not found");
+				res.status(500).send("User not found");
 			} else {
 				var dbString = result.rows[0].password;
 				var salt = dbString.split('$')[2];
 				var hashedPassword = hash(password, salt);
 				if (hashedPassword === dbString) {
-				res.send("Credentials are correct");	
+					req.session.auth = {userId: result.rows[0].id};
+					res.send("Credentials are correct");
 				} else {
 					res.status(403).send("Credentials Incorrect");
 				}
@@ -157,13 +174,25 @@ app.post('/login', function (req, res) {
 	});
 });
 
-var pool = new Pool({
-	user: 'postgres',
-	host: 'localhost',
-	database: 'imad_buildapp',
-	password: process.env.DB_PASSWORD,
-	port: 5432
+app.get('/check-login', function (req, res) {
+	if (req.session && req.session.auth && req.session.auth.userId) {
+		pool.query('SELECT * FROM "user" WHERE id = $1', [req.session.auth.userId], function (err, result) {
+			if (err) {
+				res.status(500).send(err.toString());
+			} else {
+				res.send(result.rows[0].username);
+			}
+		});
+	} else {
+		res.status(400).send('You are not logged in');
+	}
 });
+
+app.get('/logout', function (req, res) {
+	delete req.session.auth;
+	res.send("<html><body>Logged Out, Successfully<br/><br/><a href='/'>Home</a></body></html>")
+});
+
 app.get('/test-db', function(req, res) {
 	//make a select request
 	pool.query('SELECT * FROM test', function (err, result){
@@ -176,7 +205,7 @@ app.get('/test-db', function(req, res) {
 	//return a response with results
 });
 
-var counter = 0;
+/*var counter = 0;
 app.get('/counter', function(req, res) {
 	counter = counter + 1;
 	res.send(counter.toString());
@@ -188,14 +217,28 @@ app.get('/submit-bird', function (req, res) {
 	var bird = req.query.bird;
 	birds.push(bird);
 	res.send(JSON.stringify(birds));
+});*/
+
+//Article list for the Home page
+app.get('/get-articles', function(req, res) {
+	pool.query('SELECT * from article ORDER BY date DESC', function(err, result){
+		if (err) {
+			res.status(500).send(err.toString());
+		} else {
+			res.send(JSON.stringify(result.rows));
+		}
+	});
 });
 
-var commentList = [];
-app.get('/articals/:articleName/comment', function (req, res) {
-	//Get the Comment from request
-	var comment = req.query.comment;
-	commentList.push(comment);
-	res.send(JSON.stringify(commentList));
+//Need to get the comments for those articles
+app.get('/get-comments/:articleName', function(req,res) {
+	pool.query('SELECT comment.*, "user".username FROM article, comment, "user" WHERE article.title = $1 AND article.id = comment.article_id AND comment.user_id = "user".id ORDER BY comment.timestamp DESC', [req.params.articleName], function (err, result) {
+		if (err) {
+			res.status(500).send(err.toString());
+		} else {
+				res.send(JSON.stringify(result.rows));
+		}
+	});
 });
 
 app.get('/articles/:articleName', function(req, res) {
@@ -216,20 +259,8 @@ app.get('/articles/:articleName', function(req, res) {
 	/*res.sendFile(path.join(__dirname, 'ui', 'article-one.html'));*/
 });
 
-app.get('/ui/style.css', function (req, res) {
-	res.sendFile(path.join(__dirname, 'ui', 'style.css'));
-});
-
-app.get('/ui/main.js', function (req, res) {
-	res.sendFile(path.join(__dirname, 'ui', 'main.js'));
-});
-
-app.get('/ui/comment.js', function (req, res) {
-	res.sendFile(path.join(__dirname, 'ui', 'comment.js'));
-});
-
-app.get('/ui/madi.png', function (req, res) {
-	res.sendFile(path.join(__dirname, 'ui', 'madi.png'));
+app.get('/ui/:fileName', function (req, res) {
+	res.sendFile(path.join(__dirname, 'ui', req.params.fileName));
 });
 
 var port = 8080;
